@@ -95,7 +95,29 @@ git remote add upstream https://github.com/moldovancsaba/calendar-agent.git
 git remote -v
 ```
 
-### 4. Build the Application
+### 4. Quick Start - Build & Run (5 Minutes)
+
+For quick setup without all the details:
+
+```bash
+# Build and bundle the app
+bash /Users/Shared/Projects/claude/calendar-agent/build-bundle.sh
+
+# Launch the app
+open /Applications/Calendar\ Agent.app
+
+# Check logs for status
+# View the Logs tab in the app
+```
+
+This will:
+- ✅ Compile Swift code
+- ✅ Create app bundle
+- ✅ Code-sign application
+- ✅ Install to /Applications/
+- ✅ Ready to use
+
+### 5. Build the Application (Detailed)
 
 ```bash
 # Option 1: From command line
@@ -1210,6 +1232,253 @@ log stream --predicate 'process == "Calendar Agent"'
 - Check app menu: **Calendar Agent → Check for Updates...**
 - View logs to see error message
 - Verify GitHub API is accessible: `curl https://api.github.com`
+
+---
+
+## GitHub Release Setup (Complete Guide)
+
+### Step 1: Create GitHub Repository
+
+```bash
+# Go to https://github.com/new and create repository, OR use GitHub CLI:
+gh repo create calendar-agent --public
+
+# Then locally:
+cd /Users/Shared/Projects/claude/calendar-agent
+git init
+git add .
+git commit -m "Initial commit - Calendar Agent v1.0.0"
+git remote add origin https://github.com/YOUR_USERNAME/calendar-agent.git
+git branch -M main
+git push -u origin main
+```
+
+### Step 2: Configure Update URL (Important!)
+
+The app needs to know your GitHub repository for update checks:
+
+**In `Sources/CalendarAgent.swift` (around line 73):**
+```swift
+private let updateCheckURL = "https://api.github.com/repos/YOUR_USERNAME/calendar-agent/releases/latest"
+```
+
+Replace `YOUR_USERNAME` with your actual GitHub username, then rebuild.
+
+### Step 3: Build the App
+
+```bash
+bash /Users/Shared/Projects/claude/calendar-agent/build-bundle.sh
+```
+
+### Step 4: Create First Release on GitHub
+
+```bash
+# Create release tag and push
+git tag v1.0.0
+git push origin v1.0.0
+
+# Create release on GitHub:
+gh release create v1.0.0 \
+  --title "Calendar Agent v1.0.0" \
+  --notes "Initial release"
+```
+
+Or manually:
+1. Go to https://github.com/YOUR_USERNAME/calendar-agent
+2. Click "Releases" → "Create a new release"
+3. Tag: `v1.0.0`
+4. Title: `Calendar Agent v1.0.0`
+5. Add release notes
+6. Click "Publish release"
+
+### Step 5: Create App Bundle Archive
+
+```bash
+# Create ZIP of the app
+cd /Applications
+zip -r Calendar-Agent-v1.0.0.zip "Calendar Agent.app"
+
+# Or with gh CLI
+gh release upload v1.0.0 /Applications/Calendar-Agent-v1.0.0.zip
+```
+
+### Step 6: Upload to Release (Manual Option)
+
+1. Go to your release page
+2. Click "Edit"
+3. Drag & drop the ZIP file, or click "Attach files"
+4. Click "Update release"
+
+**Important**: Make sure ZIP contains `Calendar Agent.app` at the root.
+
+---
+
+## Version Management
+
+### Semantic Versioning
+
+Use this format for all releases:
+
+```
+MAJOR.MINOR.PATCH
+
+v1.0.0  - Major release (breaking changes)
+v1.1.0  - Minor release (new features)
+v1.0.1  - Patch release (bug fixes)
+v2.0.0  - Next major version
+```
+
+### Update Version in Code
+
+Before creating a release, update `Info.plist`:
+
+```bash
+# Edit the version
+# Find: <key>CFBundleShortVersionString</key>
+# Change: <string>1.0.0</string>
+```
+
+Then rebuild and create new release with matching tag.
+
+---
+
+## Release Workflow (Step by Step)
+
+### Creating a New Release
+
+```bash
+# 1. Make your code changes
+# 2. Update version in Info.plist (e.g., 1.0.1)
+# 3. Rebuild
+bash /Users/Shared/Projects/claude/calendar-agent/build-bundle.sh
+
+# 4. Test locally
+open /Applications/Calendar\ Agent.app
+
+# 5. Commit changes
+git add .
+git commit -m "Release v1.0.1: Bug fixes and improvements"
+
+# 6. Create release
+git tag v1.0.1
+git push origin main
+git push origin v1.0.1
+
+# 7. Create GitHub release with app bundle
+gh release create v1.0.1 \
+  --title "Calendar Agent v1.0.1" \
+  --notes "- Fixed update system
+- Improved error messages
+- Better UI responsiveness"
+
+# 8. Upload app
+cd /Applications
+zip -r Calendar-Agent-v1.0.1.zip "Calendar Agent.app"
+gh release upload v1.0.1 Calendar-Agent-v1.0.1.zip
+```
+
+### Testing Updates
+
+```bash
+# 1. Create old and new versions
+# Old: v1.0.0
+# New: v1.0.1 (higher version)
+
+# 2. Launch old version
+open /Applications/Calendar\ Agent.app
+
+# 3. Check Logs tab
+# Should see: "Update available: v1.0.1"
+
+# 4. Click "Install Now" in update banner
+# App downloads, installs, and restarts
+
+# 5. Verify new version running
+# Check About dialog or Logs
+```
+
+---
+
+## Data Preservation Across Updates
+
+Your data survives updates because it's stored separately:
+
+**Persistent (survives updates):**
+- ✅ All tasks
+- ✅ All workflows  
+- ✅ Settings and preferences
+- ✅ Execution logs
+- ✅ Custom functions
+
+**Updated:**
+- The app binary (/Applications/Calendar Agent.app)
+- All Swift/SwiftUI code
+- UI resources
+
+Location: `~/Library/Preferences/` (UserDefaults)
+
+---
+
+## Troubleshooting Updates
+
+### "Update check failed"
+
+**Diagnosis:**
+```bash
+# Check internet
+ping api.github.com
+
+# Check GitHub URL is correct in code
+grep updateCheckURL /Users/Shared/Projects/claude/calendar-agent/Sources/CalendarAgent.swift
+
+# Check repository exists
+curl https://api.github.com/repos/YOUR_USERNAME/calendar-agent
+```
+
+**Solutions:**
+1. Verify GitHub URL in CalendarAgent.swift matches your repository
+2. Ensure repository is public
+3. Check internet connectivity
+4. Rebuild app after changing URL
+
+### "No app bundle found in release"
+
+**Cause:** Release has no .zip or .app file attached
+
+**Fix:**
+```bash
+# Create and upload app bundle
+cd /Applications
+zip -r Calendar-Agent-v1.0.X.zip "Calendar Agent.app"
+
+# Upload via gh CLI or GitHub web interface
+gh release upload v1.0.X Calendar-Agent-v1.0.X.zip
+```
+
+### "Update installs but app doesn't restart"
+
+**Cause:** Timing issue or old process still running
+
+**Fix:**
+```bash
+# Kill any running Calendar Agent
+killall Calendar\ Agent
+
+# Manually restart
+open /Applications/Calendar\ Agent.app
+
+# Or wait 2-3 seconds for automatic restart
+```
+
+### "App says up to date when newer version exists"
+
+**Cause:** Haven't checked recently, app needs restart
+
+**Fix:**
+1. Restart the app (Cmd+Q, then reopen)
+2. Press Shift+Cmd+U to manually check
+3. Wait up to 1 hour for periodic check
+4. Check GitHub release exists with proper tag format (v1.0.0)
 
 ---
 
