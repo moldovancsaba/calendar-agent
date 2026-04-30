@@ -18,6 +18,20 @@ struct CalendarAgentApp: App {
                     viewModel.showAbout = true
                 }
             }
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates...") {
+                    viewModel.checkForUpdates()
+                }
+                .keyboardShortcut("u", modifiers: [.command, .shift])
+
+                if viewModel.updateAvailable {
+                    Button("Install Update (v\(viewModel.availableVersion))") {
+                        viewModel.downloadAndInstallUpdate()
+                    }
+                }
+
+                Divider()
+            }
         }
     }
 }
@@ -46,6 +60,8 @@ class CalendarAgentViewModel: NSObject, ObservableObject {
     @Published var isCheckingForUpdates = false
     @Published var downloadProgress: Double = 0.0
     @Published var isDownloadingUpdate = false
+    @Published var updateStatus: String = "" // "checking", "available", "downloading", "installing"
+    @Published var updateErrorMessage: String = ""
 
     // Ollama Models
     @Published var ollamaModels: [String] = []
@@ -326,6 +342,9 @@ class CalendarAgentViewModel: NSObject, ObservableObject {
             guard let self = self else { return }
             DispatchQueue.main.async {
                 self.isCheckingForUpdates = true
+                self.updateStatus = "checking"
+                self.updateErrorMessage = ""
+                self.addLog("Checking for updates...")
             }
 
             guard let url = URL(string: self.updateCheckURL) else { return }
@@ -344,7 +363,10 @@ class CalendarAgentViewModel: NSObject, ObservableObject {
 
                 guard let data = data, error == nil else {
                     DispatchQueue.main.async {
-                        self.addLog("Update check failed: \(error?.localizedDescription ?? "Unknown error")")
+                        let errorMsg = error?.localizedDescription ?? "Unknown error"
+                        self.updateErrorMessage = errorMsg
+                        self.updateStatus = ""
+                        self.addLog("Update check failed: \(errorMsg)")
                     }
                     return
                 }
@@ -358,15 +380,20 @@ class CalendarAgentViewModel: NSObject, ObservableObject {
                         if self.compareVersions(currentVersion, latestVersion) < 0 {
                             self.updateAvailable = true
                             self.availableVersion = latestVersion
-                            self.addLog("Update available: v\(latestVersion)")
+                            self.updateStatus = "available"
+                            self.addLog("Update available: v\(latestVersion) (current: v\(currentVersion))")
                         } else {
                             self.updateAvailable = false
-                            self.addLog("App is up to date")
+                            self.updateStatus = ""
+                            self.addLog("App is up to date (v\(currentVersion))")
                         }
                     }
                 } catch {
                     DispatchQueue.main.async {
-                        self.addLog("Failed to parse update info: \(error.localizedDescription)")
+                        let errorMsg = error.localizedDescription
+                        self.updateErrorMessage = errorMsg
+                        self.updateStatus = ""
+                        self.addLog("Failed to parse update info: \(errorMsg)")
                     }
                 }
             }
@@ -411,7 +438,10 @@ class CalendarAgentViewModel: NSObject, ObservableObject {
 
         DispatchQueue.main.async {
             self.isDownloadingUpdate = true
+            self.updateStatus = "downloading"
             self.downloadProgress = 0
+            self.updateErrorMessage = ""
+            self.addLog("Starting update download for v\(self.availableVersion)...")
         }
 
         DispatchQueue.global().async { [weak self] in
@@ -428,8 +458,11 @@ class CalendarAgentViewModel: NSObject, ObservableObject {
 
                 guard let data = data, error == nil else {
                     DispatchQueue.main.async {
+                        let errorMsg = error?.localizedDescription ?? "Unknown error"
                         self.isDownloadingUpdate = false
-                        self.addLog("Update download failed: \(error?.localizedDescription ?? "Unknown error")")
+                        self.updateStatus = ""
+                        self.updateErrorMessage = errorMsg
+                        self.addLog("Update download failed: \(errorMsg)")
                     }
                     return
                 }
@@ -441,6 +474,8 @@ class CalendarAgentViewModel: NSObject, ObservableObject {
                         DispatchQueue.main.async {
                             self.addLog("No release assets found")
                             self.isDownloadingUpdate = false
+                            self.updateStatus = ""
+                            self.updateErrorMessage = "No release assets found"
                         }
                         return
                     }
@@ -449,6 +484,8 @@ class CalendarAgentViewModel: NSObject, ObservableObject {
                         DispatchQueue.main.async {
                             self.addLog("No app bundle found in release")
                             self.isDownloadingUpdate = false
+                            self.updateStatus = ""
+                            self.updateErrorMessage = "No app bundle found in release"
                         }
                         return
                     }
@@ -456,8 +493,11 @@ class CalendarAgentViewModel: NSObject, ObservableObject {
                     self.downloadAppBundle(from: downloadAsset.browser_download_url)
                 } catch {
                     DispatchQueue.main.async {
-                        self.addLog("Failed to parse release info: \(error.localizedDescription)")
+                        let errorMsg = error.localizedDescription
+                        self.addLog("Failed to parse release info: \(errorMsg)")
                         self.isDownloadingUpdate = false
+                        self.updateStatus = ""
+                        self.updateErrorMessage = errorMsg
                     }
                 }
             }
@@ -517,12 +557,14 @@ class CalendarAgentViewModel: NSObject, ObservableObject {
                     self.addLog("Update installed successfully. Restarting app...")
                     self.isDownloadingUpdate = false
                     self.updateAvailable = false
+                    self.updateStatus = "installing"
+                    self.updateErrorMessage = ""
 
                     // Restart the app
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                         let task = Process()
                         task.launchPath = "/bin/bash"
-                        task.arguments = ["-c", "sleep 1 && open /Applications/Calendar\\ Agent.app"]
+                        task.arguments = ["-c", "sleep 2 && open /Applications/Calendar\\ Agent.app"]
                         try? task.run()
 
                         NSApplication.shared.terminate(self)

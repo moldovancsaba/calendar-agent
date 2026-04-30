@@ -107,20 +107,57 @@ struct ContentView: View {
                     .background(Color(nsColor: .windowBackgroundColor))
                     .overlay(Divider(), alignment: .bottom)
 
-                    // Update Banner
-                    if viewModel.updateAvailable {
+                    // Update Banner - Available or Checking
+                    if viewModel.updateAvailable || viewModel.isCheckingForUpdates || !viewModel.updateErrorMessage.isEmpty {
                         VStack(spacing: 12) {
                             HStack(spacing: 12) {
-                                Image(systemName: "arrow.down.circle.fill")
-                                    .foregroundColor(.orange)
-                                    .font(.system(size: 18))
+                                // Status Icon
+                                if viewModel.isCheckingForUpdates {
+                                    ProgressView()
+                                        .frame(width: 18, height: 18)
+                                } else if viewModel.isDownloadingUpdate {
+                                    ProgressView()
+                                        .frame(width: 18, height: 18)
+                                } else if !viewModel.updateErrorMessage.isEmpty {
+                                    Image(systemName: "exclamationmark.circle.fill")
+                                        .foregroundColor(.red)
+                                        .font(.system(size: 18))
+                                } else if viewModel.updateAvailable {
+                                    Image(systemName: "arrow.down.circle.fill")
+                                        .foregroundColor(.orange)
+                                        .font(.system(size: 18))
+                                } else {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundColor(.green)
+                                        .font(.system(size: 18))
+                                }
 
                                 VStack(alignment: .leading, spacing: 4) {
-                                    Text("Update Available")
-                                        .font(.system(size: 13, weight: .semibold))
-                                    Text("Calendar Agent v\(viewModel.availableVersion) is ready to install")
-                                        .font(.system(size: 12))
-                                        .foregroundColor(.secondary)
+                                    if viewModel.isCheckingForUpdates {
+                                        Text("Checking for Updates")
+                                            .font(.system(size: 13, weight: .semibold))
+                                        Text("Looking for the latest version...")
+                                            .font(.system(size: 12))
+                                            .foregroundColor(.secondary)
+                                    } else if viewModel.isDownloadingUpdate {
+                                        Text("Downloading Update")
+                                            .font(.system(size: 13, weight: .semibold))
+                                        Text("Downloading v\(viewModel.availableVersion)...")
+                                            .font(.system(size: 12))
+                                            .foregroundColor(.secondary)
+                                    } else if !viewModel.updateErrorMessage.isEmpty {
+                                        Text("Update Failed")
+                                            .font(.system(size: 13, weight: .semibold))
+                                        Text(viewModel.updateErrorMessage)
+                                            .font(.system(size: 12))
+                                            .foregroundColor(.secondary)
+                                    } else if viewModel.updateAvailable {
+                                        Text("Update Available")
+                                            .font(.system(size: 13, weight: .semibold))
+                                        Text("Calendar Agent v\(viewModel.availableVersion) is ready to install")
+                                            .font(.system(size: 12))
+                                            .foregroundColor(.secondary)
+                                    }
                                 }
 
                                 Spacer()
@@ -128,7 +165,7 @@ struct ContentView: View {
                                 if viewModel.isDownloadingUpdate {
                                     ProgressView(value: viewModel.downloadProgress)
                                         .frame(width: 100)
-                                } else {
+                                } else if viewModel.updateAvailable && !viewModel.isCheckingForUpdates {
                                     Button(action: {
                                         viewModel.downloadAndInstallUpdate()
                                     }) {
@@ -145,7 +182,11 @@ struct ContentView: View {
                             }
                             .padding(12)
                         }
-                        .background(Color.orange.opacity(0.1))
+                        .background(viewModel.isCheckingForUpdates ? Color.blue.opacity(0.1) :
+                                   viewModel.isDownloadingUpdate ? Color.blue.opacity(0.1) :
+                                   !viewModel.updateErrorMessage.isEmpty ? Color.red.opacity(0.1) :
+                                   viewModel.updateAvailable ? Color.orange.opacity(0.1) :
+                                   Color.green.opacity(0.1))
                         .cornerRadius(8)
                         .padding(16)
                         .overlay(Divider(), alignment: .bottom)
@@ -331,7 +372,7 @@ struct TasksView: View {
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(.white)
                         .padding(.vertical, 6)
-                        .padding(.horizontal: 12)
+                        .padding(.horizontal, 12)
                         .background(Color.blue)
                         .cornerRadius(6)
                     }
@@ -1142,6 +1183,16 @@ struct WorkflowDetailEditor: View {
         case .notification: return "bell.fill"
         case .llmCall: return "sparkles"
         case .customFunction: return "function"
+        }
+    }
+
+    private func statusColor(_ status: String) -> Color {
+        switch status {
+        case "success": return .green
+        case "in_progress": return .blue
+        case "failed": return .red
+        case "pending": return .gray
+        default: return .gray
         }
     }
 }
