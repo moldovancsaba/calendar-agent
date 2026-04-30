@@ -1,0 +1,33 @@
+# Build artifacts
+.build/
+*.xcodeproj/
+*.xcworkspace/
+build_venv/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Dependencies
+Pods/
+.carthage/
+
+# Test coverage
+.coverage
+coverage/
+*.profraw
+
+# Distribution
+dist/
+dist.backup/
+
+# Temporary files
+*.tmp
+*.log
