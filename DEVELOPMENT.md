@@ -702,6 +702,416 @@ bash deploy-to-github.sh
 
 ---
 
+## Auto-Update System: Implementation Guide
+
+### Overview
+
+Calendar Agent includes a sophisticated auto-update system that:
+- ✅ Automatically checks for updates every hour
+- ✅ Allows manual "Check for Updates" via menu (Shift+Cmd+U)
+- ✅ Downloads and installs updates automatically
+- ✅ Restarts the app with new version
+- ✅ Provides visual feedback during each step
+
+### How It Works
+
+#### 1. Update Checking Flow
+
+```swift
+// User triggers: Shift+Cmd+U or periodic check (every 3600 seconds)
+checkForUpdates()
+  ↓
+Fetches: https://api.github.com/repos/moldovancsaba/calendar-agent/releases/latest
+  ↓
+Compares: current version vs latest version
+  ↓
+If newer: Shows "Update Available" banner with Install button
+  ↓
+User clicks Install → downloadAndInstallUpdate()
+  ↓
+Downloads ZIP/APP from release assets
+  ↓
+Extracts and replaces /Applications/Calendar Agent.app
+  ↓
+Relaunches new version automatically
+```
+
+#### 2. Version Comparison Logic
+
+```swift
+private func compareVersions(_ current: String, _ latest: String) -> Int {
+    // Compares: "1.0.0" vs "1.0.1"
+    // Returns: -1 (outdated), 0 (same), 1 (ahead)
+    
+    let currentParts = current.split(separator: ".").compactMap { Int($0) }
+    let latestParts = latest.split(separator: ".").compactMap { Int($0) }
+    
+    // Compares major.minor.patch numerically
+}
+```
+
+### What Went Wrong Initially
+
+#### ❌ Problem #1: Data Parsing Errors
+
+**Symptom:** "Failed to parse update info: The data couldn't be read"
+
+**Root Cause:** 
+- GitHub API returning 404 (no releases found)
+- Malformed JSON response
+- Missing release assets
+
+**How It Happened:**
+```swift
+// Initial code didn't validate release structure:
+let release = try JSONDecoder().decode(GitHubRelease.self, from: data)
+// If no releases exist, this crashes with unhelpful error
+```
+
+**Fix Applied:**
+```swift
+// Now we validate at each step:
+guard let data = data, error == nil else {
+    self.updateErrorMessage = error?.localizedDescription ?? "Unknown"
+    return
+}
+
+do {
+    let release = try JSONDecoder().decode(GitHubRelease.self, from: data)
+    
+    guard let assets = release.assets, !assets.isEmpty else {
+        self.updateErrorMessage = "No release assets found"
+        return
+    }
+    
+    guard let downloadAsset = assets.first(where: { 
+        $0.name.hasSuffix(".zip") || $0.name.hasSuffix(".app") 
+    }) else {
+        self.updateErrorMessage = "No app bundle in release"
+        return
+    }
+} catch {
+    self.updateErrorMessage = error.localizedDescription
+}
+```
+
+#### ❌ Problem #2: No Menu Access
+
+**Symptom:** Users had no way to manually trigger update check
+
+**Root Cause:** Update checking was automatic only (once per hour)
+
+**Fix Applied:**
+```swift
+// Added to app menu:
+CommandGroup(after: .appInfo) {
+    Button("Check for Updates...") {
+        viewModel.checkForUpdates()
+    }
+    .keyboardShortcut("u", modifiers: [.command, .shift])
+    
+    if viewModel.updateAvailable {
+        Button("Install Update (v\(viewModel.availableVersion))") {
+            viewModel.downloadAndInstallUpdate()
+        }
+    }
+}
+```
+
+#### ❌ Problem #3: Poor User Feedback
+
+**Symptom:** User doesn't know what's happening during update
+
+**Root Cause:** No visual indicators for different update states
+
+**Fix Applied:**
+```swift
+// Update states now tracked:
+@Published var updateStatus: String = "" 
+// Values: "checking", "available", "downloading", "installing"
+
+@Published var updateErrorMessage: String = ""
+// Shows specific error to user
+
+// Visual banner shows appropriate state:
+if viewModel.isCheckingForUpdates {
+    ProgressView() // Spinner
+    Text("Checking for Updates...")
+} else if viewModel.isDownloadingUpdate {
+    ProgressView(value: viewModel.downloadProgress) // Progress bar
+    Text("Downloading v\(viewModel.availableVersion)...")
+} else if !viewModel.updateErrorMessage.isEmpty {
+    Image(systemName: "exclamationmark.circle.fill") // Error icon
+    Text(viewModel.updateErrorMessage) // Show error
+}
+```
+
+#### ❌ Problem #4: No Restart Handling
+
+**Symptom:** App doesn't restart after update installed
+
+**Root Cause:** Process launching was async without proper timing
+
+**Fix Applied:**
+```swift
+// Before: Restarted too quickly
+DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+    let task = Process()
+    task.launchPath = "/bin/bash"
+    task.arguments = ["-c", "sleep 1 && open /Applications/Calendar\\ Agent.app"]
+    try? task.run()
+    NSApplication.shared.terminate(self)
+}
+
+// After: Better timing
+DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+    let task = Process()
+    task.launchPath = "/bin/bash"
+    task.arguments = ["-c", "sleep 2 && open /Applications/Calendar\\ Agent.app"]
+    try? task.run()
+    NSApplication.shared.terminate(self) // Quit current version
+}
+```
+
+### Implementation for Your Own App
+
+#### Step 1: Add GitHub Release Endpoint
+
+```swift
+private let updateCheckURL = "https://api.github.com/repos/YOUR_USERNAME/YOUR_REPO/releases/latest"
+```
+
+#### Step 2: Define Release Model
+
+```swift
+struct GitHubRelease: Codable {
+    let tag_name: String           // e.g., "v1.0.1"
+    let assets: [ReleaseAsset]?    // ZIP or APP files
+    let body: String?              // Release notes
+}
+
+struct ReleaseAsset: Codable {
+    let name: String                      // e.g., "App-v1.0.1.zip"
+    let browser_download_url: String      // Full download URL
+}
+```
+
+#### Step 3: Add UI State Properties
+
+```swift
+@Published var updateAvailable = false
+@Published var availableVersion = ""
+@Published var isCheckingForUpdates = false
+@Published var isDownloadingUpdate = false
+@Published var downloadProgress: Double = 0.0
+@Published var updateStatus: String = ""
+@Published var updateErrorMessage: String = ""
+```
+
+#### Step 4: Implement Check Function
+
+```swift
+func checkForUpdates() {
+    DispatchQueue.global().async { [weak self] in
+        guard let self = self else { return }
+        
+        DispatchQueue.main.async {
+            self.isCheckingForUpdates = true
+            self.updateStatus = "checking"
+            self.updateErrorMessage = ""
+        }
+        
+        guard let url = URL(string: self.updateCheckURL) else { return }
+        
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 10
+        request.setValue("application/vnd.github.v3+json", 
+                        forHTTPHeaderField: "Accept")
+        
+        URLSession.shared.dataTask(with: request) { [weak self] data, _, error in
+            guard let self = self else { return }
+            defer { 
+                DispatchQueue.main.async { 
+                    self.isCheckingForUpdates = false 
+                } 
+            }
+            
+            guard let data = data, error == nil else {
+                DispatchQueue.main.async {
+                    self.updateErrorMessage = error?.localizedDescription ?? "Unknown"
+                }
+                return
+            }
+            
+            do {
+                let release = try JSONDecoder().decode(GitHubRelease.self, from: data)
+                let currentVersion = self.getCurrentVersion()
+                let latestVersion = release.tag_name.replacingOccurrences(of: "v", with: "")
+                
+                DispatchQueue.main.async {
+                    if self.compareVersions(currentVersion, latestVersion) < 0 {
+                        self.updateAvailable = true
+                        self.availableVersion = latestVersion
+                        self.updateStatus = "available"
+                    } else {
+                        self.updateAvailable = false
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.updateErrorMessage = error.localizedDescription
+                }
+            }
+        }.resume()
+    }
+}
+```
+
+#### Step 5: Add Menu Commands
+
+```swift
+.commands {
+    CommandGroup(after: .appInfo) {
+        Button("Check for Updates...") {
+            viewModel.checkForUpdates()
+        }
+        .keyboardShortcut("u", modifiers: [.command, .shift])
+        
+        if viewModel.updateAvailable {
+            Button("Install Update (v\(viewModel.availableVersion))") {
+                viewModel.downloadAndInstallUpdate()
+            }
+        }
+    }
+}
+```
+
+#### Step 6: Create Release on GitHub
+
+```bash
+# Create release with app bundle
+gh release create v1.0.1 \
+  --title "Calendar Agent v1.0.1" \
+  --notes "Bug fixes and improvements" \
+  /path/to/Calendar-Agent-v1.0.1.zip
+
+# For next release:
+gh release create v1.0.2 ...
+```
+
+### Common Issues & Fixes
+
+#### Issue: "Update Failed - The data couldn't be read"
+
+**Diagnosis:**
+```bash
+# Check if release exists
+curl -s https://api.github.com/repos/YOUR_USERNAME/YOUR_REPO/releases/latest | jq .
+
+# Should return release JSON, not 404
+```
+
+**Solutions:**
+1. Create a GitHub release with app bundle
+2. Ensure release has downloadable assets (.zip or .app)
+3. Check GitHub API token permissions (if private repo)
+
+#### Issue: "No app bundle found in release"
+
+**Cause:** Release assets don't match expected filenames
+
+**Fix:**
+```swift
+// Current code looks for:
+$0.name.hasSuffix(".zip") || $0.name.hasSuffix(".app")
+
+// Upload with correct name:
+Calendar-Agent-v1.0.1.zip  ✅
+Calendar Agent.app         ✅
+calendar-agent.zip         ✅
+release.tar.gz            ❌ Won't be found
+```
+
+#### Issue: "Update installs but app doesn't restart"
+
+**Cause:** Timing issue or app path incorrect
+
+**Fix:**
+```swift
+// Verify app path exists:
+let appPath = "/Applications/Calendar Agent.app"
+FileManager.default.fileExists(atPath: appPath)  // Should be true
+
+// Give more time before restart:
+DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+    // Launch new version
+    // Then quit current
+}
+```
+
+### Best Practices
+
+#### 1. Version Numbering
+- Use semantic versioning: MAJOR.MINOR.PATCH
+- Tag releases: `v1.0.0`, `v1.0.1`, `v1.1.0`
+- Never skip versions
+
+#### 2. Release Notes
+```markdown
+## v1.0.1
+
+### Fixed
+- Update system error handling
+- Menu keyboard shortcut registration
+
+### Added  
+- Check for Update menu button
+- Download progress indicator
+
+### Changed
+- Improved error messages
+```
+
+#### 3. Testing Updates
+```bash
+# Before releasing:
+1. Build final version
+2. Create release on GitHub with assets
+3. Launch app in /Applications
+4. Press Shift+Cmd+U to test update check
+5. Verify update banner appears
+6. Click Install and verify restart
+```
+
+#### 4. Monitoring
+Keep logs of update attempts:
+```swift
+func addLog(_ message: String) {
+    let timestamp = ISO8601DateFormatter().string(from: Date())
+    logs.append("[\(timestamp)] \(message)")
+}
+
+// Logs show:
+// [2026-04-30T15:44:23Z] Checking for updates...
+// [2026-04-30T15:44:25Z] Update available: v1.0.1
+// [2026-04-30T15:44:30Z] Downloading update...
+// [2026-04-30T15:44:35Z] Update installed successfully
+```
+
+### Security Considerations
+
+⚠️ **Important**: Only update from trusted sources (your own GitHub account)
+
+```swift
+// SECURE: Update from your GitHub
+private let updateCheckURL = "https://api.github.com/repos/moldovancsaba/calendar-agent/releases/latest"
+
+// INSECURE: Update from anywhere
+private let updateCheckURL = settingsFromUserPreferences  // ❌ Don't do this
+```
+
+---
+
 ## Troubleshooting
 
 ### Build Errors
@@ -717,6 +1127,60 @@ ls Package.swift
 rm -rf .build
 swift package resolve
 swift build
+```
+
+### Update System Errors
+
+**"Checking for updates..." but never completes**
+```bash
+# Check network connectivity
+curl https://api.github.com/repos/moldovancsaba/calendar-agent/releases/latest
+
+# Check logs in app for detailed error
+# View menu → Settings → View Logs
+```
+
+**"Update Failed - The data couldn't be read"**
+- Release doesn't exist on GitHub
+- GitHub API rate limited (60 requests/hour without token)
+- Invalid JSON response
+
+**Solution:**
+```bash
+# Create a proper release:
+gh release create v1.0.1 \
+  --title "Calendar Agent v1.0.1" \
+  --notes "Release notes here" \
+  Calendar-Agent-v1.0.1.zip
+
+# Verify:
+curl https://api.github.com/repos/moldovancsaba/calendar-agent/releases/latest
+```
+
+**"No app bundle found in release"**
+- Release exists but no .zip or .app file attached
+- Asset filename doesn't match expected pattern
+
+**Solution:**
+1. Download release
+2. Add Calendar Agent.app (or .zip) as asset
+3. Release must have downloadable file, not just notes
+
+**"Update installs but app doesn't restart"**
+- App still locked by old process
+- Incorrect app path in code
+- Insufficient permissions
+
+**Solution:**
+```bash
+# Check if process is running
+ps aux | grep Calendar
+
+# Verify app path
+ls -la /Applications/Calendar\ Agent.app
+
+# Check permissions
+ls -l /Applications/ | grep Calendar
 ```
 
 ### Runtime Errors
@@ -741,6 +1205,12 @@ log stream --predicate 'process == "Calendar Agent"'
 # Applications → Utilities → Console
 ```
 
+**"Check for Update menu not working"**
+- Try keyboard shortcut: **Shift+Cmd+U**
+- Check app menu: **Calendar Agent → Check for Updates...**
+- View logs to see error message
+- Verify GitHub API is accessible: `curl https://api.github.com`
+
 ---
 
 ## Summary
@@ -748,10 +1218,34 @@ log stream --predicate 'process == "Calendar Agent"'
 Calendar Agent demonstrates **effective architectural decisions**:
 
 1. **Choose the right tool** - Native > Bundled
+   - Swift/SwiftUI for macOS (not Python with PyInstaller)
+   - Result: 2-5 MB binary vs 500MB+, <500ms startup vs 3-5s
+
 2. **Handle permissions properly** - Request, check, gracefully degrade
-3. **Test thoroughly** - Both architectures, all features
-4. **Document well** - Help future contributors
-5. **Stay open-source** - Community-driven development
+   - EventKit for Calendar access
+   - MessageUI for Mail integration
+   - UserDefaults for preferences
+
+3. **Implement auto-update correctly** - GitHub releases + proper error handling
+   - Automatic hourly checks + manual menu option
+   - Version comparison logic
+   - Download, verify, install, restart
+   - Comprehensive error messages
+
+4. **Test thoroughly** - All features on target platform
+   - Unit tests for business logic
+   - Manual testing on Intel + Apple Silicon
+   - Test update flow with real GitHub releases
+
+5. **Document well** - Help future contributors
+   - This development guide covers complete journey
+   - Common pitfalls with solutions
+   - Implementation templates for copy-paste
+
+6. **Stay open-source** - Community-driven development
+   - MIT License
+   - Workflows marketplace for extensions
+   - Clear contribution guidelines
 
 ---
 
