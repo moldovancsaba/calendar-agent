@@ -569,3 +569,5 @@ Calendar Agent represents the transformation from a problematic Python bundling 
 **Latest Version:** 1.0.0  
 **Last Updated:** April 30, 2026  
 **Status:** Production Ready ✨
+
+[Project board review and manual movement journal](docs/PROJECT_BOARD_MOVEMENT_LOG.md).
